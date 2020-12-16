@@ -18,8 +18,10 @@
 
 #include "smtpclient.h"
 
-#include <QFileInfo>
 #include <QByteArray>
+#include <QEventLoop>
+#include <QFileInfo>
+#include <QTimer>
 
 
 /* [1] Constructors and destructors */
@@ -87,14 +89,14 @@ void SmtpClient::setConnectionType(ConnectionType ct)
     if (socket)
         delete socket;
 
-    switch (connectionType)
-    {
+    switch (connectionType) {
     case TcpConnection:
         socket = new QTcpSocket(this);
         break;
     case SslConnection:
     case TlsConnection:
         socket = new QSslSocket(this);
+        connect(qobject_cast<QSslSocket *>(socket), SIGNAL(sslErrors(QList<QSslError>)), this, SLOT(sslErrors(QList<QSslError>)));
     }
 }
 
@@ -173,11 +175,11 @@ void SmtpClient::setResponseTimeout(int msec)
 }
 int SmtpClient::getSendMessageTimeout() const
 {
-  return sendMessageTimeout;
+    return sendMessageTimeout;
 }
 void SmtpClient::setSendMessageTimeout(int msec)
 {
-  sendMessageTimeout = msec;
+    sendMessageTimeout = msec;
 }
 
 /* [2] --- */
@@ -187,8 +189,7 @@ void SmtpClient::setSendMessageTimeout(int msec)
 
 bool SmtpClient::connectToHost()
 {
-    switch (connectionType)
-    {
+    switch (connectionType) {
     case TlsConnection:
     case TcpConnection:
         socket->connectToHost(host, port);
@@ -200,14 +201,12 @@ bool SmtpClient::connectToHost()
     }
 
     // Tries to connect to server
-    if (!socket->waitForConnected(connectionTimeout))
-    {
+    if (!socket->waitForConnected(connectionTimeout)) {
         emit smtpError(ConnectionTimeoutError);
         return false;
     }
 
-    try
-    {
+    try {
         // Wait for the server's response
         waitForResponse();
 
@@ -246,12 +245,25 @@ bool SmtpClient::connectToHost()
             };
 
             ((QSslSocket*) socket)->startClientEncryption();
-
+#if 0
             if (!((QSslSocket*) socket)->waitForEncrypted(connectionTimeout)) {
                 qDebug() << ((QSslSocket*) socket)->errorString();
                 emit smtpError(ConnectionTimeoutError);
                 return false;
             }
+#else
+            {
+                QTimer timer;
+                QEventLoop loop;
+                connect((QSslSocket*) socket, SIGNAL(encrypted()), &loop, SLOT(quit()));
+                connect(&timer, SIGNAL(timeout()), &loop, SLOT(quit()));
+                timer.start(connectionTimeout);
+                loop.exec();
+                if (timer.isActive()) {
+                    timer.stop();
+                }
+            }
+#endif
 
             // Send ELHO one more time
             sendMessage("EHLO " + name);
@@ -265,13 +277,9 @@ bool SmtpClient::connectToHost()
                 return false;
             }
         }
-    }
-    catch (ResponseTimeoutException)
-    {
+    } catch (ResponseTimeoutException) {
         return false;
-    }
-    catch (SendMessageTimeoutException)
-    {
+    } catch (SendMessageTimeoutException) {
         return false;
     }
 
@@ -287,8 +295,7 @@ bool SmtpClient::login()
 bool SmtpClient::login(const QString &user, const QString &password, AuthMethod method)
 {
     try {
-        if (method == AuthPlain)
-        {
+        if (method == AuthPlain) {
             // Sending command: AUTH PLAIN base64('\0' + username + '\0' + password)
             sendMessage("AUTH PLAIN " + QByteArray().append((char) 0).append(user).append((char) 0).append(password).toBase64());
 
@@ -301,9 +308,7 @@ bool SmtpClient::login(const QString &user, const QString &password, AuthMethod 
                 emit smtpError(AuthenticationFailedError);
                 return false;
             }
-        }
-        else if (method == AuthLogin)
-        {
+        } else if (method == AuthLogin) {
             // Sending command: AUTH LOGIN
             sendMessage("AUTH LOGIN");
 
@@ -325,22 +330,17 @@ bool SmtpClient::login(const QString &user, const QString &password, AuthMethod 
             waitForResponse();
 
             // If the response is not 235 then the authentication was faild
-            if (responseCode != 235)
-            {
+            if (responseCode != 235) {
                 emit smtpError(AuthenticationFailedError);
                 return false;
             }
         }
-    }
-    catch (ResponseTimeoutException)
-    {
+    } catch (ResponseTimeoutException) {
         // Responce Timeout exceeded
         emit smtpError(AuthenticationFailedError);
         return false;
-    }
-    catch (SendMessageTimeoutException)
-    {
-	// Send Timeout exceeded
+    } catch (SendMessageTimeoutException) {
+        // Send Timeout exceeded
         emit smtpError(AuthenticationFailedError);
         return false;
     }
@@ -350,8 +350,7 @@ bool SmtpClient::login(const QString &user, const QString &password, AuthMethod 
 
 bool SmtpClient::sendMail(MimeMessage& email)
 {
-    try
-    {
+    try {
         // Send the MAIL command with the sender
         sendMessage("MAIL FROM:<" + email.getSender().getAddress() + ">");
 
@@ -362,10 +361,7 @@ bool SmtpClient::sendMail(MimeMessage& email)
         // Send RCPT command for each recipient
         QList<EmailAddress*>::const_iterator it, itEnd;
         // To (primary recipients)
-        for (it = email.getRecipients().begin(), itEnd = email.getRecipients().end();
-             it != itEnd; ++it)
-        {
-
+        for (it = email.getRecipients().begin(), itEnd = email.getRecipients().end(); it != itEnd; ++it) {
             sendMessage("RCPT TO:<" + (*it)->getAddress() + ">");
             waitForResponse();
 
@@ -374,8 +370,7 @@ bool SmtpClient::sendMail(MimeMessage& email)
 
         // Cc (carbon copy)
         for (it = email.getRecipients(MimeMessage::Cc).begin(), itEnd = email.getRecipients(MimeMessage::Cc).end();
-             it != itEnd; ++it)
-        {
+             it != itEnd; ++it) {
             sendMessage("RCPT TO:<" + (*it)->getAddress() + ">");
             waitForResponse();
 
@@ -384,8 +379,7 @@ bool SmtpClient::sendMail(MimeMessage& email)
 
         // Bcc (blind carbon copy)
         for (it = email.getRecipients(MimeMessage::Bcc).begin(), itEnd = email.getRecipients(MimeMessage::Bcc).end();
-             it != itEnd; ++it)
-        {
+             it != itEnd; ++it) {
             sendMessage("RCPT TO:<" + (*it)->getAddress() + ">");
             waitForResponse();
 
@@ -406,13 +400,9 @@ bool SmtpClient::sendMail(MimeMessage& email)
         waitForResponse();
 
         if (responseCode != 250) return false;
-    }
-    catch (ResponseTimeoutException)
-    {
+    } catch (ResponseTimeoutException) {
         return false;
-    }
-    catch (SendMessageTimeoutException)
-    {
+    } catch (SendMessageTimeoutException) {
         return false;
     }
 
@@ -421,13 +411,10 @@ bool SmtpClient::sendMail(MimeMessage& email)
 
 void SmtpClient::quit()
 {
-    try 
-    {
+    try {
         sendMessage("QUIT");
-    }
-    catch(SmtpClient::SendMessageTimeoutException) 
-    {
-	//Manually close the connection to the smtp server if message "QUIT" wasn't received by the smtp server
+    } catch(SmtpClient::SendMessageTimeoutException) {
+        //Manually close the connection to the smtp server if message "QUIT" wasn't received by the smtp server
         if(socket->state() == QAbstractSocket::ConnectedState || socket->state() == QAbstractSocket::ConnectingState || socket->state() == QAbstractSocket::HostLookupState)
             socket->disconnectFromHost();
     }
@@ -441,8 +428,7 @@ void SmtpClient::quit()
 void SmtpClient::waitForResponse()
 {
     do {
-        if (!socket->waitForReadyRead(responseTimeout))
-        {
+        if (!socket->waitForReadyRead(responseTimeout)) {
             emit smtpError(ResponseTimeoutError);
             throw ResponseTimeoutException();
         }
@@ -468,10 +454,9 @@ void SmtpClient::waitForResponse()
 void SmtpClient::sendMessage(const QString &text)
 {
     socket->write(text.toUtf8() + "\r\n");
-    if (! socket->waitForBytesWritten(sendMessageTimeout))
-    {
-      emit smtpError(SendDataTimeoutError);
-      throw SendMessageTimeoutException();
+    if (! socket->waitForBytesWritten(sendMessageTimeout)) {
+        emit smtpError(SendDataTimeoutError);
+        throw SendMessageTimeoutException();
     }
 }
 
@@ -490,6 +475,15 @@ void SmtpClient::socketError(QAbstractSocket::SocketError /*socketError*/)
 
 void SmtpClient::socketReadyRead()
 {
+}
+
+void SmtpClient::sslErrors(QList<QSslError> errors)
+{
+    qDebug() << __FUNCTION__ << errors;
+    QSslSocket *sslSocket = qobject_cast<QSslSocket *>(socket);
+    if (sslSocket != nullptr) {
+        sslSocket->ignoreSslErrors();
+    }
 }
 
 /* [5] --- */
