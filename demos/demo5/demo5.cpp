@@ -19,7 +19,6 @@ int main(int argc, char *argv[])
     // We need to set the username (your email address) and password
     // for smtp authentification.
 
-//    smtp.setName("cdpc011.corp.ats.net");
     smtp.setUser("xxx-main\\xxx_sys_linux");
     smtp.setPassword("xxx");
 
